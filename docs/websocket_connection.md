@@ -33,9 +33,12 @@ playwright install chromium
 
 ## Examples
 
+Run from `examples/` directory.
+
 ### Local server
 
 ```bash
+cd examples
 # Connect to local server, open Google (default)
 python websocket_connection.py
 

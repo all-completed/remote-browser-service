@@ -37,6 +37,7 @@ A service that creates remote browser sessions on-demand. Control a headless Chr
 Use the provided client script. See [docs/websocket_connection.md](docs/websocket_connection.md) for full description and examples.
 
 ```bash
+cd examples
 pip install -r requirements-client.txt
 playwright install chromium
 
