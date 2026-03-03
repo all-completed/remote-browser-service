@@ -7,6 +7,9 @@ A service that creates remote browser sessions on-demand. Control a headless Chr
 - [Features](#features)
 - [Principals](#principals)
 - [Usage](#usage)
+  - [Playwright (recommended)](#playwright-recommended)
+  - [Raw WebSocket Connection](#raw-websocket-connection)
+  - [OpenClaw (ClawHub skill)](#openclaw-clawhub-skill)
 - [API Endpoints](#api-endpoints)
 - [Documentation](#documentation)
 
@@ -37,6 +40,7 @@ A service that creates remote browser sessions on-demand. Control a headless Chr
 Use the provided client script. See [docs/websocket_connection.md](docs/websocket_connection.md) for full description and examples.
 
 ```bash
+cd examples
 pip install -r requirements.txt
 playwright install chromium
 
@@ -44,16 +48,49 @@ playwright install chromium
 python websocket_connection.py --server-url http://localhost:8080 --user-id dev-user --session-id abc123
 
 # Remote (API key from AC_API_KEY env or --api-token)
-python websocket_connection.py --server-url https://<host> --user-id YOUR_USER_ID --session-id abc123
+python websocket_connection.py --server-url https://rb.all-completed.com --user-id YOUR_USER_ID --session-id abc123
 
 # Short URL: user_id from token (token required)
-python websocket_connection.py --server-url https://<host> --session-id abc123 --short-url
+python websocket_connection.py --server-url https://rb.all-completed.com --session-id abc123 --short-url
 ```
 
 ### WebSocket URLs
 
 - **Full path**: `wss://<host>/users/{user_id}/ws/{session_id}?mode=browser`
 - **Short alias**: `wss://<host>/ws/{session_id}?mode=browser&access_token=<token>` (user_id from token)
+
+### OpenClaw (ClawHub skill)
+
+Install the skill so your OpenClaw agent can control the remote browser:
+
+```bash
+# Install OpenClaw (if not already)
+npm install -g openclaw@latest
+
+# Install ClawHub CLI and log in
+npm i -g clawhub
+clawhub login
+
+# Install the skill into your OpenClaw workspace
+clawhub install remote-browser-service
+```
+
+Configure your API key in `~/.openclaw/openclaw.json`:
+
+```json5
+{
+  skills: {
+    entries: {
+      "remote-browser-service": {
+        enabled: true,
+        env: { AC_API_KEY: "YOUR_API_KEY" },
+      },
+    },
+  },
+}
+```
+
+Or set the `AC_API_KEY` environment variable. See [skills/remote-browser-service/SKILL.md](skills/remote-browser-service/SKILL.md) for full API reference.
 
 ## API Endpoints
 
@@ -62,7 +99,8 @@ See [docs/api.md](docs/api.md) for full API documentation.
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | GET | `/health` | No | Health check |
-| GET | `/api/users/me/api-key` | Auth0 | Get / generate API token |
+| GET | `/api/users/me/api-key` | Auth0 | Get user metadata / current API token |
+| PUT | `/api/users/me/api-key` | Auth0 | Generate new API token |
 | GET | `/api/sessions` | Yes | List active sessions |
 | POST | `/api/sessions` | Yes | Start session via HTTP |
 | GET | `/api/sessions/{session_id}` | Yes | Get session details |
@@ -81,7 +119,24 @@ See [docs/api.md](docs/api.md) for full API documentation.
 
 - [api.md](docs/api.md) – Full API reference: endpoints, auth, errors, session lifecycle
 - [websocket_connection.md](docs/websocket_connection.md) – Client script: arguments and examples
-- [SKILL.md](docs/SKILL.md) – AI agent skill: workflow and quick reference
+- [skills/remote-browser-service/SKILL.md](skills/remote-browser-service/SKILL.md) – OpenClaw skill (ClawHub): workflow and quick reference
+
+## Project Structure
+
+```
+remote-browser-service/
+├── docs/                     # Documentation
+│   ├── api.md               # API reference
+│   ├── websocket_connection.md
+│   └── SKILL.md             # Skill reference (also in skills/)
+├── examples/                 # Client scripts
+│   ├── websocket_connection.py
+│   └── requirements.txt
+├── skills/                   # OpenClaw / ClawHub skill bundle
+│   └── remote-browser-service/
+│       └── SKILL.md
+└── README.md
+```
 
 ## License
 
