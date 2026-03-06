@@ -185,6 +185,16 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/page-size" \
 
 Returns `{width, height}` in CSS pixels.
 
+### Element bounds
+
+```bash
+# Get element bounding box (x, y, width, height) for coordinate-based clicks
+curl "https://rb.all-completed.com/api/sessions/{session_id}/element-bounds?selector=%5Bdata-testid%3D%22submit%22%5D" \
+  -H "Authorization: Bearer <token>"
+```
+
+Returns `{x, y, width, height}` in viewport coordinates. Use with `POST .../action` and `{"kind": "click", "x": cx, "y": cy}` (cx = x + width/2, cy = y + height/2) for coordinate-based clicks.
+
 ### Act on elements
 
 ```bash

@@ -1,12 +1,23 @@
 # Remote Browser Service API Documentation
 
-HTTP REST and WebSocket API for managing remote browser sessions.
+HTTP REST and WebSocket API for managing browser sessions. Supports Kubernetes (pods) or Docker (containers) as instance backends.
 
 ## Base URL
 
 The API is available at:
-- Production: `https://<host>` (replace with your service URL)
+- Production: `https://rb.all-completed.com`
 - Local development: `http://localhost:8080` (or `PORT` env)
+
+## Instance backends
+
+The service can create browser instances via Kubernetes or Docker:
+
+| Backend | Env var | Use case |
+|---------|---------|----------|
+| Kubernetes (default) | `INSTANCE_BACKEND=kubernetes` | Production, in-cluster deployment |
+| Docker | `INSTANCE_BACKEND=docker` | Local development without a cluster |
+
+**Local server with Docker:** Run without Kubernetes by setting `INSTANCE_BACKEND=docker`. Requires Docker daemon and `vasiliiv/remote-browser` (or `REMOTE_BROWSER_IMAGE`) image.
 
 ## Authentication
 
@@ -20,7 +31,7 @@ All API endpoints (except `/health`) require authentication. The service support
    - The `user_id` in path must match the authenticated user's user_id from the token
 
 2. **API Key Authentication**:
-   - API key is a JWT containing `user_id`. Get it from the UI (API Token in sidebar) or `PUT /api/users/me/api-key`
+   - API key is a JWT signed with `JWT_SECRET`, containing `user_id`. Get it from the UI (Token page at `#/token`) or `PUT /api/users/me/api-key`
    - Provide API key using one of:
      - Authorization Header: `Authorization: Bearer <api-key>`
      - X-API-Key Header: `X-API-Key: <api-key>`
@@ -59,14 +70,15 @@ All API endpoints (except `/health`) require authentication. The service support
 - [`GET /api/sessions/{session_id}/text`](#extract-text) - Readable page text
 - [`GET /api/sessions/{session_id}/screenshot`](#screenshot) - JPEG screenshot
 - [`GET /api/sessions/{session_id}/page-size`](#page-size) - Page content dimensions
+- [`GET /api/sessions/{session_id}/element-bounds`](#element-bounds) - Element bounding box by selector
 - [`GET /api/sessions/{session_id}/image`](#image) - Screenshot of element by selector
 - [`POST /api/sessions/{session_id}/action`](#browser-action) - Browser action (click, type, fill, etc.)
 
-#### Stored Sessions
+#### Stored Sessions (S3)
 - [`GET /api/users/{user_id}/stored-sessions`](#list-stored-sessions) or [`GET /api/stored-sessions`](#list-stored-sessions) - List stored session IDs
 - [`GET /api/users/{user_id}/stored-sessions/{session_id}`](#get-stored-session-metadata) or [`GET /api/stored-sessions/{session_id}`](#get-stored-session-metadata) - Get stored session metadata
 - [`PUT /api/users/{user_id}/stored-sessions/{session_id}`](#put-stored-session-metadata) or [`PUT /api/stored-sessions/{session_id}`](#put-stored-session-metadata) - Update stored session metadata
-- [`DELETE /api/users/{user_id}/stored-sessions/{session_id}`](#delete-stored-session) or [`DELETE /api/stored-sessions/{session_id}`](#delete-stored-session) - Delete stored session
+- [`DELETE /api/users/{user_id}/stored-sessions/{session_id}`](#delete-stored-session) or [`DELETE /api/stored-sessions/{session_id}`](#delete-stored-session) - Delete stored session from S3
 
 #### WebSocket
 - [`GET /users/{user_id}/ws/{session_id}`](#websocket-devtools) - DevTools CDP WebSocket (user_id in path)
@@ -111,7 +123,9 @@ List active sessions for the authenticated user.
     {
       "session_id": "session-123",
       "created_at": "2026-02-12T10:00:00",
-      "active_ws_connections": 1
+      "active_ws_connections": 1,
+      "status": "ready",
+      "last_error": null
     }
   ],
   "count": 1
@@ -120,7 +134,7 @@ List active sessions for the authenticated user.
 
 **Example using curl:**
 ```bash
-curl "https://<host>/api/sessions" \
+curl "https://rb.all-completed.com/api/sessions" \
   -H "Authorization: Bearer <token>"
 ```
 
@@ -130,7 +144,7 @@ curl "https://<host>/api/sessions" \
 
 #### `POST /api/users/{user_id}/sessions` or `POST /api/sessions`
 
-Start a session via HTTP (without WebSocket). Creates a browser instance. Sessions idle for 5 minutes are closed automatically; use `POST .../ping` to keep alive.
+Start a session via HTTP (without WebSocket). Creates a browser instance (Kubernetes pod or Docker container depending on `INSTANCE_BACKEND`). Sessions idle for 5 minutes are closed automatically; use `POST .../ping` to keep alive.
 
 **Path Parameters:** (user-scoped only)
 - `user_id` (string, required) - User ID (must match authenticated user)
@@ -157,7 +171,7 @@ or start from metadata but do not save (ephemeral):
 | `session_id` | string | No | Custom session ID. If omitted, a unique ID is generated. |
 | `url` | string | No | Navigate to this URL immediately after session start. If omitted and session has stored metadata (e.g. from a previous run), the saved URL is used. |
 | `from` | string | No | Fork from this stored session ID. Restores cookies, localStorage, sessionStorage from the source; saves the new session under `session_id`. |
-| `ephemeral` | boolean | No | If `true`, do not save session and metadata when the session terminates. Use when starting from metadata or forking but you do not want to persist the new session. |
+| `ephemeral` | boolean | No | If `true`, do not save session and metadata to S3 when the session terminates. Use when starting from metadata or forking but you do not want to persist the new session. |
 
 **Response (200 OK):**
 ```json
@@ -170,17 +184,18 @@ or start from metadata but do not save (ephemeral):
 
 **Error Responses:**
 - `403 Forbidden` - Session exists and belongs to another user
-- `500 Internal Server Error` - Failed to create session
+- `429 Too Many Requests` - User has reached the maximum concurrent sessions limit (1 per user). **Recovery:** Wait a few seconds (previous session may still be shutting down) and/or terminate the existing session via `DELETE /api/sessions/{session_id}` before retrying.
+- `500 Internal Server Error` - Failed to create pod
 
 **Example using curl:**
 ```bash
-curl -X POST "https://<host>/api/sessions" \
+curl -X POST "https://rb.all-completed.com/api/sessions" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{}'
 
 # With initial URL
-curl -X POST "https://<host>/api/sessions" \
+curl -X POST "https://rb.all-completed.com/api/sessions" \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://example.com"}'
@@ -237,7 +252,7 @@ Keep session alive; resets the 5-minute idle timeout.
 
 #### `DELETE /api/users/{user_id}/sessions/{session_id}` or `DELETE /api/sessions/{session_id}`
 
-Terminate an active session. Saves state to storage if configured.
+Terminate an active session. Deletes the pod and saves to S3 if configured.
 
 **Path Parameters:**
 - `session_id` (string, required) - Session identifier
@@ -252,7 +267,7 @@ Terminate an active session. Saves state to storage if configured.
 
 **Error Responses:**
 - `404 Not Found` - Session not found
-- `500 Internal Server Error` - Failed to terminate session
+- `500 Internal Server Error` - Failed to delete pod
 
 ---
 
@@ -473,6 +488,37 @@ Return page content dimensions in CSS pixels. Use with screenshot `x`, `y`, `wid
 
 ---
 
+### Element Bounds
+
+#### `GET /api/users/{user_id}/sessions/{session_id}/element-bounds` or `GET /api/sessions/{session_id}/element-bounds`
+
+Return an element's bounding box (x, y, width, height) in viewport coordinates. Scrolls the element into view first. Use with `/action` for coordinate-based clicks.
+
+**Path Parameters:**
+- `session_id` (string, required) - Session identifier
+
+**Query Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `selector` | string | Yes | CSS selector (e.g. `[data-testid="click-me"]`, `#submit`) |
+
+**Response (200 OK):**
+```json
+{
+  "x": 420.5,
+  "y": 312.0,
+  "width": 120,
+  "height": 44
+}
+```
+
+**Error Responses:**
+- `400 Bad Request` - Missing selector
+- `404 Not Found` - Session not found
+- `502 Bad Gateway` - Element not found or bounds failed
+
+---
+
 ### Image
 
 #### `GET /api/users/{user_id}/sessions/{session_id}/image` or `GET /api/sessions/{session_id}/image`
@@ -568,7 +614,7 @@ For `press`: `key` is required. Optional `selector` or `ref` focuses that elemen
 
 #### `GET /api/users/{user_id}/stored-sessions` or `GET /api/stored-sessions`
 
-List stored session IDs. Stored state includes cookies, localStorage, sessionStorage, and metadata (e.g. last page URL used for redirect on resume).
+List stored session IDs (from S3). Stored state includes cookies, localStorage, sessionStorage, and metadata (e.g. last page URL used for redirect on resume).
 
 **Response (200 OK):**
 ```json
@@ -621,7 +667,7 @@ Update stored session metadata. Merges with existing. Body: `{url?}`.
 
 #### `DELETE /api/users/{user_id}/stored-sessions/{session_id}` or `DELETE /api/stored-sessions/{session_id}`
 
-Remove persisted session state.
+Remove persisted session state from S3.
 
 **Path Parameters:**
 - `session_id` (string, required) - Session identifier
@@ -636,7 +682,7 @@ Remove persisted session state.
 
 **Error Responses:**
 - `404 Not Found` - Session not found
-- `503 Service Unavailable` - Storage not configured
+- `503 Service Unavailable` - S3 storage not configured
 
 ---
 
@@ -657,18 +703,20 @@ DevTools CDP WebSocket. Connects to the browser's DevTools protocol (e.g. for Pl
 | `access_token` or `token` | Auth token (required for `/ws/...`, optional for `/users/...`) |
 | `url` | Navigate to this URL immediately after session start (optional). If omitted and session has stored metadata from a previous run, the saved URL is used. |
 | `from` | Fork from this stored session ID. Restores cookies, localStorage, sessionStorage from the source; saves the new session under the path `session_id`. |
-| `ephemeral` | If `true`, do not save session and metadata when the session terminates. Use when starting from metadata or forking but you do not want to persist the new session. |
+| `ephemeral` | If `true`, do not save session and metadata to S3 when the session terminates. Use when starting from metadata or forking but you do not want to persist the new session. |
 
 **Examples:**
 ```
-wss://<host>/users/YOUR_USER_ID/ws/my-session?mode=browser&access_token=<token>
-wss://<host>/ws/my-session?mode=browser&access_token=<token>
-wss://<host>/ws/my-session?mode=browser&url=https://example.com&access_token=<token>
-wss://<host>/ws/my-fork?mode=browser&from=original-session&access_token=<token>
-wss://<host>/ws/ephemeral?mode=browser&ephemeral=true&access_token=<token>
+wss://rb.all-completed.com/users/vvazhesov/ws/my-session?mode=browser&access_token=<token>
+wss://rb.all-completed.com/ws/my-session?mode=browser&access_token=<token>
+wss://rb.all-completed.com/ws/my-session?mode=browser&url=https://example.com&access_token=<token>
+wss://rb.all-completed.com/ws/my-fork?mode=browser&from=original-session&access_token=<token>
+wss://rb.all-completed.com/ws/ephemeral?mode=browser&ephemeral=true&access_token=<token>
 ```
 
 **Note:** Creates session on first connection if it does not exist. Closing the last WebSocket connection terminates the session.
+
+Maximum 1 concurrent session per user. When the limit is exceeded, the server rejects the upgrade with **HTTP 429** (not 101) and a JSON body `{"detail":"Maximum concurrent sessions per user is 1. Terminate an existing session before creating a new one."}`. Wait a few seconds and/or terminate the existing session via `DELETE /api/sessions/{session_id}` before retrying.
 
 ---
 
@@ -686,10 +734,10 @@ Serve noVNC client page (connects to VNC WebSocket at `/users/{user_id}/vnc/ws/{
 
 ## Session Lifecycle
 
-1. **Start session** — `POST /api/sessions` (HTTP) or connect to `GET /ws/{session_id}` (WebSocket). WebSocket creates session on first connection.
+1. **Start session** — `POST /api/sessions` (HTTP) or connect to `GET /ws/{session_id}` (WebSocket). WebSocket creates session on first connection. Limit: 1 concurrent session per user; if rejected (429 or WebSocket close), wait and/or terminate existing session before retrying.
 2. **Keep alive** — Sessions idle for **5 minutes** are closed automatically. Use `POST .../ping` or any session-using call (navigate, screenshot, action, etc.) to reset the timer.
 3. **Stop session** — `DELETE /api/sessions/{session_id}` (HTTP) or close the last WebSocket connection. Idle timeout also closes sessions.
-4. **Persistence** — When a session is terminated (HTTP delete or last WS disconnect), state (cookies, localStorage, sessionStorage, metadata including current page URL) is saved to storage if configured. Use `GET /api/stored-sessions` to list stored sessions. When resuming without a `url` parameter, the saved URL is used for redirect.
+4. **Persistence** — When a session is terminated (HTTP delete or last WS disconnect), state (cookies, localStorage, sessionStorage, metadata including current page URL) is saved to S3 if configured. Use `GET /api/stored-sessions` to list stored sessions. When resuming without a `url` parameter, the saved URL is used for redirect.
 
 ---
 
@@ -704,6 +752,7 @@ All endpoints return standard HTTP status codes:
 | 401 | Unauthorized – invalid or missing token |
 | 403 | Forbidden – user_id mismatch |
 | 404 | Session not found |
+| 429 | Too many requests – maximum concurrent sessions per user (1) reached. Wait and/or terminate existing session before retrying. |
 | 428 | User ID not set (UserIdSetup required) |
 | 502 | Browser/CDP error – navigate, screenshot, action, or snapshot failed |
 | 503 | Service not initialized or storage not configured |
