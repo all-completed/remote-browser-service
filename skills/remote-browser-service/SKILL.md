@@ -3,7 +3,8 @@ name: remote-browser-service
 description: >
   Control a remote Chrome browser via HTTP API (Kubernetes or Docker backend). Use for web automation,
   scraping, form filling, navigation, and page inspection. Exposes accessibility
-  tree, text extraction, screenshots, and actions — optimized
+  tree, text extraction, Chrome screenshots, VNC-native screenshots,
+  DOM actions, and VNC actions — optimized
   for AI agents. Requires an active browser session (created via HTTP or WebSocket).
 metadata:
   openclaw:
@@ -18,7 +19,23 @@ metadata:
 
 # Remote Browser Service
 
-Browser control for AI agents via HTTP API. Workflow: navigate, snapshot, act.
+Browser control for AI agents via HTTP API. Supports both DOM-oriented automation
+and remote-desktop/VNC control when you need the actual framebuffer.
+
+## Index
+
+- [Setup](#setup)
+- [Core Workflow](#core-workflow)
+- [API Reference](#api-reference)
+- [Screenshot](#screenshot)
+- [VNC interface](#vnc-interface)
+- [VNC screenshot](#vnc-screenshot)
+- [Act on elements](#act-on-elements)
+- [VNC action](#vnc-action)
+- [HTML snapshot](#html-snapshot)
+- [Token Cost Guide](#token-cost-guide)
+- [Environment Variables](#environment-variables)
+- [Tips](#tips)
 
 ## Setup
 
@@ -37,7 +54,33 @@ Base URL: `https://rb.all-completed.com` (or `RBS_BASE_URL`). Replace `{session_
 3. **Act** on refs or selectors (click, type, fill, press)
 4. **Snapshot** again to see results
 
+For visual or OS-level flows, use the VNC path instead:
+
+1. **Open VNC interface** — `GET /users/{user_id}/vnc/{session_id}` when you want a live noVNC view
+2. **Capture VNC framebuffer** — `GET .../vnc/screenshot`
+3. **Send VNC input** — `POST .../vnc/action` with coordinates or keys
+4. **Capture again** to verify pixel-level results
+
 Refs (`e0`, `e1`, …) from `/json` can be used with `/action` via `selector` (use `ref` as selector for `e5` → `"e5"` maps to role/name; for now use CSS `selector`).
+
+Supported actions by mode:
+
+| Mode               | Kind     | Example                                                     |
+|--------------------|----------|-------------------------------------------------------------|
+| DOM (`/action`)    | `click`  | `{"kind":"click","selector":"button.submit"}`               |
+| DOM (`/action`)    | `tap`    | `{"kind":"tap","selector":"button.submit"}`                 |
+| DOM (`/action`)    | `type`   | `{"kind":"type","selector":"#email","text":"user@example.com"}` |
+| DOM (`/action`)    | `fill`   | `{"kind":"fill","selector":"#email","text":"user@example.com"}` |
+| DOM (`/action`)    | `press`  | `{"kind":"press","key":"Enter"}`                            |
+| DOM (`/action`)    | `focus`  | `{"kind":"focus","selector":"input[name=search]"}`          |
+| DOM (`/action`)    | `hover`  | `{"kind":"hover","selector":"button.submit"}`               |
+| DOM (`/action`)    | `select` | `{"kind":"select","selector":"select","value":"option-1"}`  |
+| DOM (`/action`)    | `scroll` | `{"kind":"scroll","scrollY":800}`                           |
+| VNC (`/vnc/action`) | `move`   | `{"kind":"move","x":320,"y":240}`                           |
+| VNC (`/vnc/action`) | `click`  | `{"kind":"click","x":320,"y":240,"button":"left","repeat":1}` |
+| VNC (`/vnc/action`) | `type`   | `{"kind":"type","text":"hello world"}`                      |
+| VNC (`/vnc/action`) | `press`  | `{"kind":"press","keys":["Ctrl","l"]}`                      |
+| VNC (`/vnc/action`) | `scroll` | `{"kind":"scroll","x":320,"y":240,"direction":"down","repeat":3}` |
 
 ## API Reference
 
@@ -175,6 +218,41 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/screenshot?x=0&y=0&
   -o region.jpg
 ```
 
+Use this when Chrome DevTools rendering is enough. If you need browser chrome,
+OS dialogs, permission prompts, or the exact remote desktop pixels, use
+`/vnc/screenshot` instead.
+
+### VNC interface
+
+```bash
+# Built-in noVNC client page for a session
+open "https://rb.all-completed.com/users/{user_id}/vnc/{session_id}"
+
+# Under the hood the page connects to the VNC websocket proxy
+# /users/{user_id}/vnc/ws/{session_id}
+```
+
+Use the VNC interface when you need a live remote-desktop view of the session
+instead of DOM snapshots.
+
+### VNC screenshot
+
+```bash
+# Raw PNG bytes from the VNC framebuffer
+curl "https://rb.all-completed.com/api/sessions/{session_id}/vnc/screenshot?raw=true" \
+  -H "Authorization: Bearer <token>" \
+  -o screen.png
+
+# Cropped framebuffer region
+curl "https://rb.all-completed.com/api/sessions/{session_id}/vnc/screenshot?x=0&y=0&width=800&height=600&raw=true" \
+  -H "Authorization: Bearer <token>" \
+  -o region.png
+```
+
+Unlike `/screenshot`, this captures the VNC framebuffer directly. Use it for
+browser chrome, native permission prompts, OS-level dialogs, or anything only
+visible in the remote desktop.
+
 ### Page size
 
 ```bash
@@ -184,16 +262,6 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/page-size" \
 ```
 
 Returns `{width, height}` in CSS pixels.
-
-### Element bounds
-
-```bash
-# Get element bounding box (x, y, width, height) for coordinate-based clicks
-curl "https://rb.all-completed.com/api/sessions/{session_id}/element-bounds?selector=%5Bdata-testid%3D%22submit%22%5D" \
-  -H "Authorization: Bearer <token>"
-```
-
-Returns `{x, y, width, height}` in viewport coordinates. Use with `POST .../action` and `{"kind": "click", "x": cx, "y": cy}` (cx = x + width/2, cy = y + height/2) for coordinate-based clicks.
 
 ### Act on elements
 
@@ -241,7 +309,34 @@ curl -X POST "https://rb.all-completed.com/api/sessions/{session_id}/action" \
   -d '{"kind": "scroll", "scrollY": 800}'
 ```
 
-**Action kinds:** `click`, `type`, `fill`, `press`, `focus`, `hover`, `select`, `scroll`. Use `selector` (CSS) or `ref` (from snapshot). For `click` you can use `x` and `y` (viewport coordinates) instead of selector. For `press` use `key` (e.g. `Enter`, `Tab`, `Escape`, `Space`, `ArrowUp`); optional `selector` focuses element first.
+**Action kinds:** `click`, `type`, `fill`, `press`, `focus`, `hover`, `select`, `scroll`. Use `selector` (CSS) or `ref` (from snapshot). For `click` you can use `x` and `y` (viewport coordinates) instead of selector. For `fill`, the server focuses the field, `select()` only if the field already has text (then `Input.insertText` replaces), otherwise focuses and inserts like `type`—controlled inputs (e.g. React) update reliably. For `press` use `key` (e.g. `Enter`, `Tab`, `Escape`, `Space`, `ArrowUp`); optional `selector` focuses element first.
+
+### VNC action
+
+```bash
+# Move mouse
+curl -X POST "https://rb.all-completed.com/api/sessions/{session_id}/vnc/action" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"move","x":320,"y":240}'
+
+# Click at framebuffer coordinates
+curl -X POST "https://rb.all-completed.com/api/sessions/{session_id}/vnc/action" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"click","x":320,"y":240,"button":"left","repeat":1}'
+
+# Press keys directly over VNC
+curl -X POST "https://rb.all-completed.com/api/sessions/{session_id}/vnc/action" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{"kind":"press","keys":["Ctrl","l"]}'
+```
+
+**VNC action kinds:** `move`, `click`, `type`, `press`, `scroll`.
+
+These actions are framebuffer-oriented and do not use DOM selectors. Prefer them
+when DOM automation cannot see or control the target UI.
 
 ### HTML snapshot
 
@@ -258,10 +353,11 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/html" \
 | `/text` | ~800 | Reading page content |
 | `/json?filter=interactive` | ~3,600 | Finding buttons/links to click |
 | `/json` | ~10,500 | Full page structure |
-| `/screenshot` | ~2K (vision) | Visual verification |
+| `/screenshot` | ~2K (vision) | Visual verification from Chrome/DevTools |
+| `/vnc/screenshot` | ~2K (vision) | Visual verification from the actual remote desktop |
 | `/image?selector=` | ~1K (vision) | Download image or capture single element |
 
-**Strategy:** Use `/text` when you only need content. Use `/json?filter=interactive` for action-oriented tasks. Use full `/json` for complete page understanding. Use `/screenshot` for visual checks.
+**Strategy:** Use `/text` when you only need content. Use `/json?filter=interactive` for action-oriented tasks. Use full `/json` for complete page understanding. Use `/screenshot` for Chrome-rendered visual checks. Use `/vnc/screenshot` and `/vnc/action` when you need the real remote desktop surface.
 
 ## Environment Variables
 
@@ -277,4 +373,5 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/html" \
 - **Refs from snapshot** — Use `selector` with the `ref` string (e.g. `"e5"`) when the action API supports ref→DOM resolution; otherwise prefer CSS selectors.
 - **Readability vs raw** — `/text` (default) strips nav/footer/ads; `?mode=raw` returns full `innerText`.
 - **Interactive filter** — `?filter=interactive` on `/json` reduces nodes by ~75% for action tasks.
+- **VNC vs DOM** — Use `/action` for selectors/refs in the page DOM. Use `/vnc/action` and `/vnc/screenshot` for pixel-level automation and UI outside the DOM.
 - **Stored sessions** — Sessions persist to S3 when WebSocket closes (cookies, localStorage, sessionStorage, metadata). List with `GET /api/stored-sessions`, then connect via WebSocket to resume. If `url` is not provided on connect, the saved page URL is used for redirect. Use `GET/PUT /api/stored-sessions/{session_id}` to read or update metadata (e.g. redirect URL).
