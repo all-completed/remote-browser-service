@@ -98,22 +98,35 @@ Or set the `AC_API_KEY` environment variable. See [skills/remote-browser-service
 
 See [docs/api.md](docs/api.md) for full API documentation.
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/health` | No | Health check |
-| GET | `/api/users/me/api-key` | Auth0 | Get user metadata / current API token |
-| PUT | `/api/users/me/api-key` | Auth0 | Generate new API token |
-| GET | `/api/sessions` | Yes | List active sessions |
-| POST | `/api/sessions` | Yes | Start session via HTTP |
-| GET | `/api/sessions/{session_id}` | Yes | Get session details |
-| DELETE | `/api/sessions/{session_id}` | Yes | Terminate session |
-| POST | `/api/sessions/{session_id}/navigate` | Yes | Navigate to URL |
-| GET | `/api/sessions/{session_id}/json` | Yes | Accessibility tree (Pinchtab format) |
-| GET | `/api/sessions/{session_id}/text` | Yes | Readable page text |
-| GET | `/api/sessions/{session_id}/screenshot` | Yes | JPEG screenshot |
-| POST | `/api/sessions/{session_id}/action` | Yes | Browser action (click, type, fill, etc.) |
-| GET | `/api/stored-sessions` | Yes | List stored session IDs |
-| DELETE | `/api/stored-sessions/{session_id}` | Yes | Delete stored session |
+| Method | Path                                | Auth           | Description                            |
+| ------ | ----------------------------------- | -------------- | -------------------------------------- |
+| GET    | `/health`                           | No             | Health check                           |
+| GET    | `/api/users/me/api-key`             | Auth0          | Get user metadata / current API token  |
+| PUT    | `/api/users/me/api-key`             | Auth0          | Generate new API token                 |
+| PUT    | `/api/users/me/user_id`             | Auth0          | Set `user_id` once                     |
+| GET    | `/api/sessions`                     | Yes            | List active sessions                   |
+| POST   | `/api/sessions`                     | Yes            | Start session via HTTP                 |
+| GET    | `/api/sessions/{session_id}`        | Yes            | Get session details                    |
+| POST   | `/api/sessions/{session_id}/ping`   | Yes            | Keep session alive                     |
+| DELETE | `/api/sessions/{session_id}`        | Yes            | Terminate session                      |
+| POST   | `/api/sessions/{session_id}/navigate` | Yes          | Navigate to URL                        |
+| POST   | `/api/sessions/{session_id}/location` | Yes          | Set page geolocation                   |
+| GET    | `/api/sessions/{session_id}/html`   | Yes            | HTML snapshot with inlined CSS         |
+| GET    | `/api/sessions/{session_id}/json`   | Yes            | Accessibility tree (Pinchtab format)   |
+| GET    | `/api/sessions/{session_id}/text`   | Yes            | Readable page text                     |
+| GET    | `/api/sessions/{session_id}/screenshot` | Yes        | JPEG screenshot                        |
+| GET    | `/api/sessions/{session_id}/page-size` | Yes         | Page content dimensions                |
+| GET    | `/api/sessions/{session_id}/element-bounds` | Yes    | Element bounding box by selector       |
+| GET    | `/api/sessions/{session_id}/image`  | Yes            | Capture a single element by selector   |
+| POST   | `/api/sessions/{session_id}/action` | Yes            | Browser action (click, type, fill, etc.) |
+| GET    | `/api/stored-sessions`              | Yes            | List stored session IDs                |
+| GET    | `/api/stored-sessions/{session_id}` | Yes            | Get stored session metadata            |
+| PUT    | `/api/stored-sessions/{session_id}` | Yes            | Update stored session metadata         |
+| DELETE | `/api/stored-sessions/{session_id}` | Yes            | Delete stored session                  |
+| GET    | `/ws/{session_id}`                  | Token in query | DevTools CDP WebSocket                 |
+| GET    | `/users/{user_id}/ws/{session_id}`  | Yes            | DevTools CDP WebSocket                 |
+| GET    | `/users/{user_id}/vnc/{session_id}` | Yes            | noVNC client page                      |
+| WS     | `/users/{user_id}/vnc/ws/{session_id}` | Yes         | VNC WebSocket proxy                    |
 
 **Authentication**: Bearer token, `X-API-Key` header, or `api_key` / `access_token` query param.
 
