@@ -155,4 +155,4 @@ remote-browser-service/
 
 ## License
 
-Copyright (c) 2026
+Copyright (c) All Completed, 2026
