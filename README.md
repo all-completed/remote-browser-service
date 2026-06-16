@@ -74,7 +74,7 @@ npm i -g clawhub
 clawhub login
 
 # Install the skill into your OpenClaw workspace
-clawhub install remote-browser-service
+clawhub install remote-browser
 ```
 
 Configure your API key in `~/.openclaw/openclaw.json`:
@@ -83,7 +83,7 @@ Configure your API key in `~/.openclaw/openclaw.json`:
 {
   skills: {
     entries: {
-      "remote-browser-service": {
+      "remote-browser": {
         enabled: true,
         env: { AC_API_KEY: "YOUR_API_KEY" },
       },
