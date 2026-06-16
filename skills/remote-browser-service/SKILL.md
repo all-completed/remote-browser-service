@@ -2,10 +2,10 @@
 name: remote-browser-service
 description: >
   Control a remote Chrome browser via HTTP API (Kubernetes or Docker backend). Use for web automation,
-  scraping, form filling, navigation, and page inspection. Exposes accessibility
-  tree, text extraction, Chrome screenshots, VNC-native screenshots,
-  DOM actions, and VNC actions — optimized
-  for AI agents. Requires an active browser session (created via HTTP or WebSocket).
+  form filling, navigation, and page inspection on sites the user owns or has permission to access.
+  Exposes the accessibility tree, text extraction, Chrome screenshots, VNC-native screenshots,
+  DOM actions, and VNC actions — optimized for AI agents. Requires an active browser session
+  (created via HTTP or WebSocket).
 metadata:
   openclaw:
     emoji: "🌐"
@@ -34,6 +34,7 @@ and remote-desktop/VNC control when you need the actual framebuffer.
 - [VNC action](#vnc-action)
 - [HTML snapshot](#html-snapshot)
 - [Token Cost Guide](#token-cost-guide)
+- [Limitations & fallbacks](#limitations--fallbacks)
 - [Environment Variables](#environment-variables)
 - [Tips](#tips)
 
@@ -76,6 +77,7 @@ Supported actions by mode:
 | DOM (`/action`)    | `hover`  | `{"kind":"hover","selector":"button.submit"}`               |
 | DOM (`/action`)    | `select` | `{"kind":"select","selector":"select","value":"option-1"}`  |
 | DOM (`/action`)    | `scroll` | `{"kind":"scroll","scrollY":800}`                           |
+| DOM (`/action`)    | `submit` | `{"kind":"submit","selector":"#nav-search-form"}` (or a field within the form) |
 | VNC (`/vnc/action`) | `move`   | `{"kind":"move","x":320,"y":240}`                           |
 | VNC (`/vnc/action`) | `click`  | `{"kind":"click","x":320,"y":240,"button":"left","repeat":1}` |
 | VNC (`/vnc/action`) | `type`   | `{"kind":"type","text":"hello world"}`                      |
@@ -106,6 +108,36 @@ Maximum 1 concurrent session per user. If creation returns 429 or WebSocket clos
 curl "https://rb.all-completed.com/api/sessions" \
   -H "Authorization: Bearer <token>"
 ```
+
+### Session status
+
+```bash
+curl "https://rb.all-completed.com/api/sessions/{session_id}/status" \
+  -H "Authorization: Bearer <token>"
+```
+
+Returns live session state plus current page metadata:
+
+```json
+{
+  "session_id": "session-123",
+  "created_at": "2026-02-12T10:00:00",
+  "active_ws_connections": 1,
+  "status": "ready",
+  "last_error": null,
+  "current_url": "https://example.com/page",
+  "page_title": "Example Domain",
+  "last_status_code": 200
+}
+```
+
+HTTP status codes:
+
+- `200` - Session found; manager status returned, with live page metadata when available
+- `404` - Session not found for the authenticated user
+- `503` - Service not initialized
+
+`last_status_code` is the browser's last navigation response code when Chrome exposes it through Navigation Timing. If it is not available yet, the field is `null`.
 
 ### List stored sessions
 
@@ -350,14 +382,30 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/html" \
 
 | Method | Typical tokens | When to use |
 |--------|----------------|-------------|
-| `/text` | ~800 | Reading page content |
-| `/json?filter=interactive` | ~3,600 | Finding buttons/links to click |
-| `/json` | ~10,500 | Full page structure |
-| `/screenshot` | ~2K (vision) | Visual verification from Chrome/DevTools |
-| `/vnc/screenshot` | ~2K (vision) | Visual verification from the actual remote desktop |
-| `/image?selector=` | ~1K (vision) | Download image or capture single element |
+| `/status` | ~50 | Just the current URL / title / HTTP status |
+| `/text` (readability) | ~800 | Reading page content |
+| `/text?mode=raw` | ~2K–8K | Content readability strips (hidden labels, etc.) |
+| `/json?filter=interactive` | ~3,600 | Finding buttons/links/inputs to act on (+ refs) |
+| `/json` (full a11y tree) | ~10,500 | Full structure / element relationships |
+| `/html?obfuscate=true` (simple markup) | ~10K–40K | Need exact CSS selectors / markup the a11y tree lacks |
+| `/html` (full markup) | very large | Raw DOM + inlined CSS; rarely needed, may exceed the 5 MiB cap |
+| `/image?selector=` | ~1K (vision) | Capture a single element / download an image |
+| `/screenshot` (clipped, low `quality`) | ~1K–2K (vision) | Visual check of one region |
+| `/screenshot` (full page) | ~2K+ (vision) | Whole-page layout / visual verification |
+| `/vnc/screenshot` | ~2K+ (vision) | Non-DOM/native UI, canvas, or when DOM tools fail |
 
-**Strategy:** Use `/text` when you only need content. Use `/json?filter=interactive` for action-oriented tasks. Use full `/json` for complete page understanding. Use `/screenshot` for Chrome-rendered visual checks. Use `/vnc/screenshot` and `/vnc/action` when you need the real remote desktop surface.
+**Decision order — use the *cheapest* tool that answers your question, escalate only if it doesn't:**
+
+1. **`/status`** — only need where you are (URL/title/status).
+2. **`/text`** — reading/extracting content. (`?mode=raw` if readability hides what you need.)
+3. **`/json?filter=interactive`** — locating things to click/type; returns refs to act on.
+4. **`/json`** (full) — need structure/relationships the filtered tree omits.
+5. **`/html?obfuscate=true`** — need a precise selector/markup not surfaced by the a11y tree. Prefer obfuscated (compact) over full.
+6. **`/html`** (full) — last resort for raw markup/CSS; large.
+7. **`/screenshot` (clipped + low quality)** — *only* for visual confirmation or non-DOM layout. Always clip (`x,y,width,height`) and drop `quality`; never grab a full high-quality page when a region will do.
+8. **`/vnc/screenshot`** — only for native/canvas/non-DOM surfaces, or when DOM extraction genuinely fails.
+
+**Rule of thumb:** text/markup ≫ screenshots for token cost. A clipped JPEG is still an image; a `/text` call is a few hundred tokens. Act on **selectors/refs** from steps 2–6 rather than re-screenshotting to "look again," and verify state changes with the cheapest read, not a fresh full screenshot.
 
 ## Environment Variables
 
@@ -369,9 +417,22 @@ curl "https://rb.all-completed.com/api/sessions/{session_id}/html" \
 ## Tips
 
 - **Session required** — Ensure a session exists before calling navigate/json/text/action. Create via `POST /api/sessions` (HTTP), WebSocket, or restore from stored sessions.
+- **Check live URL** — Use `GET /api/sessions/{session_id}/status` when you need the current page URL/title or last response status without fetching full page text.
 - **429 / session limit** — If create fails with 429 or WebSocket closes (limit exceeded): wait a few seconds and/or terminate the existing session with `DELETE /api/sessions/{session_id}` first, then retry.
 - **Refs from snapshot** — Use `selector` with the `ref` string (e.g. `"e5"`) when the action API supports ref→DOM resolution; otherwise prefer CSS selectors.
 - **Readability vs raw** — `/text` (default) strips nav/footer/ads; `?mode=raw` returns full `innerText`.
 - **Interactive filter** — `?filter=interactive` on `/json` reduces nodes by ~75% for action tasks.
 - **VNC vs DOM** — Use `/action` for selectors/refs in the page DOM. Use `/vnc/action` and `/vnc/screenshot` for pixel-level automation and UI outside the DOM.
-- **Stored sessions** — Sessions persist to S3 when WebSocket closes (cookies, localStorage, sessionStorage, metadata). List with `GET /api/stored-sessions`, then connect via WebSocket to resume. If `url` is not provided on connect, the saved page URL is used for redirect. Use `GET/PUT /api/stored-sessions/{session_id}` to read or update metadata (e.g. redirect URL).
+- **Stored sessions** — Sessions persist to S3 when WebSocket closes (cookies, localStorage, sessionStorage, IndexedDB, Cache Storage, metadata). List with `GET /api/stored-sessions`, then connect via WebSocket to resume. If `url` is not provided on connect, the saved page URL is used for redirect. Use `GET/PUT /api/stored-sessions/{session_id}` to read or update metadata (e.g. redirect URL). To move or edit persisted state without a live browser, use `GET/PUT /api/stored-sessions/{session_id}/cookies` (JSON array of cookie objects), `GET/PUT .../local-storage`, `GET/PUT .../session-storage` (both JSON objects with string keys and string values), `GET/PUT .../indexeddb` (IndexedDB snapshot object), and `GET/PUT .../cache-storage` (Cache Storage snapshot object).
+
+## Limitations & fallbacks
+
+Real-world heavy pages (Amazon, marketplaces, dashboards) hit these. Know the fallback for each:
+
+- **Prefer text/markup extraction over screenshots** — For reading page content, `/text`, `/json` (accessibility snapshot), and `/html` are *far* more efficient than `/screenshot` or `/vnc/screenshot`: they return compact, parseable structure instead of a large base64 image, so they cost a fraction of the tokens/bandwidth and give you selectors to act on. **Default to text/markup; use screenshots only for visual verification, pixel-level layout, or canvas/`<iframe>`/non-DOM UI.**
+- **CDP frame limit (now 5 MiB)** — `/text`, `/json`, and `/html` return over a CDP WebSocket whose frame cap was raised from 1 MiB to **5 MiB**, so they now succeed on most heavy pages. If a page is still too large and you get `502` / `frame exceeds limit ... bytes`, **then** fall back: prefer narrowing first (`/text?mode=readability` (default), `/json?filter=interactive`) before resorting to a **clipped `/screenshot`** (`x,y,width,height` + lower `quality`) or `/vnc/screenshot` (framebuffer, independent of the CDP limit).
+- **Prefer `fill` over `type` for form fields** — `type` does `focus()` + `Input.insertText`; some controlled/React inputs don't register it. `fill` does select-all + insertText with real input events and is the reliable choice for text fields. Use `type` only for appending to plain inputs.
+- **To submit a form, use `submit` (not `press` Enter)** — a synthetic `press` Enter does not perform the browser's default submit. Use `{"kind":"submit","selector":"<form or a field in it>"}`, or click the submit button by selector (selector `click` does a DOM `element.click()`).
+- **Actions can report `{"ok": true}` without taking effect** — a `click` resolves the element box and dispatches a mouse event; if the target is off-viewport, covered by an overlay/sticky bar, or the page is a SPA mid-update, the event can be a no-op even though the call "succeeds". **Always verify state after any state-changing action** (re-screenshot, or re-check the relevant page e.g. the cart) rather than trusting `ok`. Prefer **selector-based** clicks over bare `x,y`; coordinate clicks on cart/checkout pages may also be blocked by host safety policy. If a selector click no-ops, try scrolling it into view first (`{"kind":"scroll"}`) or click via a screenshot-derived coordinate.
+- **Session lifetime & reopening** — A session with **no live VNC viewer** (`active_ws_connections: 0`, e.g. one created purely via the API/MCP) is reclaimed after ~5 minutes idle, and **any service restart/deploy drops all live sessions**. The stored state survives, so **to reopen/resume, just create a session with the SAME `session_id`** — it relaunches the browser and restores cookies/localStorage (you stay logged in). List resumable ids with `GET /api/stored-sessions`. For multi-step tasks: keep acting (each call resets idle), avoid long external pauses, and `ping` between steps.
+- **Encrypted sessions reopen the same way** — if a session was created with `encrypt_with_api_key`, you reopen it identically: create with the same `session_id` using the same API-key/OAuth auth you use for every call. The encryption key is derived **server-side from your token** — you never see, pass, or "handle" it. Don't avoid reopening an encrypted session; it is not a special case.
