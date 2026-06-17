@@ -133,6 +133,8 @@ See [docs/api.md](docs/api.md) for full API documentation.
 ## Documentation
 
 - [api.md](docs/api.md) – Full API reference: endpoints, auth, errors, session lifecycle
+- [keeper-protocol.md](docs/keeper-protocol.md) – Out-of-band credential fill: the agent asks *which* field, the user supplies the *value* (never seen by the model)
+- [keeper-fill-formats.md](docs/keeper-fill-formats.md) – `request_fill` field `length` and `format` options
 - [websocket_connection.md](docs/websocket_connection.md) – Client script: arguments and examples
 - [skills/remote-browser-service/SKILL.md](skills/remote-browser-service/SKILL.md) – OpenClaw skill (ClawHub): workflow and quick reference
 
@@ -142,6 +144,8 @@ See [docs/api.md](docs/api.md) for full API documentation.
 remote-browser-service/
 ├── docs/                     # Documentation
 │   ├── api.md               # API reference
+│   ├── keeper-protocol.md   # Out-of-band credential fill (Keeper)
+│   ├── keeper-fill-formats.md
 │   ├── websocket_connection.md
 │   └── SKILL.md             # Skill reference (also in skills/)
 ├── examples/                 # Client scripts

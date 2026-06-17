@@ -73,6 +73,8 @@ All API endpoints (except `/health`) require authentication. The service support
 - [`GET /api/sessions/{session_id}/element-bounds`](#element-bounds) - Element bounding box by selector
 - [`GET /api/sessions/{session_id}/image`](#image) - Screenshot of element by selector
 - [`POST /api/sessions/{session_id}/action`](#browser-action) - Browser action (click, type, fill, etc.)
+- [`POST /api/sessions/{session_id}/request-fill`](#request-fill-keeper) - Ask the user (via Keeper) to supply secret field value(s); never seen by the agent
+- [`GET /api/sessions/fill-status/{request_id}`](#fill-status) - Poll the status of a `request-fill`
 
 #### Stored Sessions (S3)
 - [`GET /api/users/{user_id}/stored-sessions`](#list-stored-sessions) or [`GET /api/stored-sessions`](#list-stored-sessions) - List stored session IDs
@@ -607,6 +609,123 @@ For `press`: `key` is required. Optional `selector` or `ref` focuses that elemen
 - `400 Bad Request` - Invalid kind or missing selector/ref
 - `404 Not Found` - Session not found
 - `502 Bad Gateway` - Action failed
+
+---
+
+### Request Fill (Keeper)
+
+#### `POST /api/users/{user_id}/sessions/{session_id}/request-fill` or `POST /api/sessions/{session_id}/request-fill`
+
+Ask the **user** to supply one or more SECRET field values (passwords, login
+codes, 2FA, etc.) and have the **service** type them into the page. Use this —
+never `action/fill` or `action/type` — for any value the agent must not see.
+
+The value never reaches the agent: the request goes to the user's **Keeper**
+desktop app (which shows your `message` and a screenshot of the field area as
+proof), the user types the value, and the service inserts it. The agent only
+learns the *status*. Full protocol: [keeper-protocol.md](keeper-protocol.md).
+Field `format` options: [keeper-fill-formats.md](keeper-fill-formats.md).
+
+This is **asynchronous** — it returns immediately with a `request_id`; poll
+[`fill-status`](#fill-status) for the outcome.
+
+**Path Parameters:**
+- `session_id` (string, required) - Session identifier
+
+**Request Body (JSON)** — a single field:
+```json
+{
+  "selector": "input[name=password]",
+  "label": "Password",
+  "field": "password",
+  "length": 20,
+  "format": "numeric",
+  "message": "Logging into Telegram to read your unread chats"
+}
+```
+Or several fields in one prompt (max **50**):
+```json
+{
+  "fields": [
+    { "selector": "#user", "label": "Username", "field": "login" },
+    { "selector": "#pass", "label": "Password", "field": "password", "length": 32 }
+  ],
+  "message": "Signing in to your account",
+  "url": "https://example.com/login",
+  "screenshot_selector": "form#login"
+}
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `selector` | string | Yes (per field) | CSS selector of the field to fill |
+| `ref` | string | Alternative to selector | Ref from accessibility snapshot |
+| `fields` | array | For multi-field | List of `{selector, label?, field?, length?, format?}` (max 50) |
+| `label` | string | No | Short field name shown to the user (e.g. `"Password"`). Capped at 120 chars |
+| `field` | string | No | Prompt hint: `password` (default, masked), `code`, `login`, `email`, `text` |
+| `length` | integer | No | Max input length (1–4096); caps the Keeper input |
+| `format` | string | No | Input constraint/hint: `email`, `numeric`/`digits`, or a regex. See [formats](keeper-fill-formats.md) |
+| `message` | string | No | Plain-language reason shown to the user. Capped at 600 chars |
+| `url` | string | No | Page URL shown to the user; auto-detected from the page if omitted |
+| `screenshot_selector` | string | No | Selector to capture for the single proof screenshot |
+| `screenshot_selectors` | array | No | Selectors whose union (+ margin) is captured as the single proof screenshot |
+
+The Keeper shows **one** proof screenshot for the whole request. If neither
+`screenshot_selector` nor `screenshot_selectors` is given, the union of the field
+selectors (plus a margin) is captured. **Prefer capturing the entire form** —
+point `screenshot_selector` at the enclosing `<form>` (or its container) so the
+user sees the whole form in context, clearer proof than a tight crop.
+
+**Response (200 OK):**
+```json
+{
+  "request_id": "1f3c2a40-…-uuid",
+  "session_id": "telegram",
+  "status": "pending",
+  "fields": 2
+}
+```
+`status` is `pending`, or `no_keeper` if the user has no Keeper app connected.
+The value is **never** returned and **never** logged.
+
+**Error Responses:**
+- `400 Bad Request` - Missing selector, or more than 50 fields
+- `404 Not Found` - Session not found
+
+---
+
+### Fill Status
+
+#### `GET /api/sessions/fill-status/{request_id}`
+
+Poll the status of a [`request-fill`](#request-fill-keeper) by id. The value is
+never included.
+
+**Path Parameters:**
+- `request_id` (string, required) - The id returned by `request-fill`
+
+**Response (200 OK):**
+```json
+{
+  "request_id": "1f3c2a40-…",
+  "session_id": "telegram",
+  "status": "filled",
+  "fields": 2,
+  "created_at": 1781234567.89
+}
+```
+
+| status | meaning |
+|--------|---------|
+| `pending` | waiting on the user |
+| `filled` | value(s) received and typed into the field(s) |
+| `cancelled` | user dismissed the prompt |
+| `timeout` | user did not respond in time (default 300s) |
+| `no_keeper` | no Keeper app connected for this user |
+| `error` | value received but typing it failed |
+
+**Error Responses:**
+- `404 Not Found` - Unknown `request_id` (or pruned ~10 min after completion, or owned by another user)
 
 ---
 
