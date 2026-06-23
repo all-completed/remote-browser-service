@@ -14,10 +14,17 @@ service types it into the page. The model only learns the *status*.
 
 A user's Keeper app holds one persistent socket (auto-reconnect).
 
-**Auth:** header only — `Authorization: Bearer <API_KEY>` (or `X-API-Key: <API_KEY>`).
-The token is **never** placed in the URL/query, so it can't leak into proxy/access
-logs. The user_id is derived from the token; a Keeper may only fill that user's
-sessions.
+**Auth:** the token is **never** placed in the URL/query, so it can't leak into
+proxy/access logs. Three accepted forms (checked in order):
+
+1. `Authorization: Bearer <API_KEY>` header (desktop Keeper).
+2. `X-API-Key: <API_KEY>` header.
+3. WebSocket **subprotocol** `["bearer", "<API_KEY>"]` — for browser/WebView
+   clients that can't set request headers. The server reads the token from
+   `Sec-WebSocket-Protocol` and echoes `bearer` to complete the handshake. In JS:
+   `new WebSocket(url, ["bearer", apiKey])`.
+
+The user_id is derived from the token; a Keeper may only fill that user's sessions.
 
 ### Messages
 
@@ -35,7 +42,7 @@ Server → Keeper (`request_id` is a server-generated UUID; one or more fields, 
     {
       "selector": "#password",
       "label": "Password",
-      "field": "password",     // password|code|login|email|text (prompt hint)
+      "field": "password",     // password|code|login|email|text|card-* (prompt hint; see keeper-fill-formats.md)
       "length": 20,            // optional: max input length
       "format": "numeric"      // optional: email | numeric/digits | a regex
     }

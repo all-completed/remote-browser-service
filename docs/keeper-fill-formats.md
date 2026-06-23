@@ -59,7 +59,52 @@ default presentation:
 - `code` — masked (treat like a secret).
 - `login`, `email`, `text` — shown as plain text.
 
-The reveal (👁) button lets the user toggle masking regardless of `field`.
+**Payment-card kinds** — the Keeper renders card-aware inputs, so you don't need
+to set `length`/`format` (the defaults below apply):
+
+| `field` | Masked | `format` (optional) | Input behavior | Submitted value |
+|---|---|---|---|---|
+| `card-holder-name` | no | — | text, capitalizes words | as typed |
+| `card-number` | no (shown) | a `#`-mask, default `#### #### #### ####` | numeric; digits grouped per the mask (visible, like a checkout form) | **digits only** |
+| `card-cvv` | yes | — | numeric; ≤4 | as typed |
+| `card-exp` | no | a date template, default `MM/YY` | numeric, auto-formats; a **year-only** (`YYYY`/`YY`) or **month-only** (`MM`) format renders a **dropdown** | as displayed |
+| `card-billing-address` | no | a component token (or empty) | empty → multi-line whole address; a token → single-line component | as typed |
+
+The reveal (👁) button lets the user toggle masking regardless of `field` (single-line fields).
+
+### Card field `format`
+
+- **`card-number`** — `format` is a digit **mask** of `#` (slot) and spaces. Default
+  `#### #### #### ####` (16 digits grouped in 4s, shown — not masked — so the user can
+  read it back). Pass a 15/19-`#` mask for Amex/long cards. Always submitted as digits only.
+- **`card-exp`** — `format` is a **date template** built from `M`/`Y` and separators.
+  Recognized: `MM/YY` (default), `MM/YYYY`, `YY`, `YYYY`, `MM`. Combined templates are
+  typed and auto-formatted (e.g. `MM/YYYY` → `12/2028`). **Single-component** templates
+  render a **dropdown**: a year-only format (`YYYY`/`YY`) → a year picker (this year to
+  +10, 4- or 2-digit per the format); a month-only format (`MM`) → a `01`–`12` month
+  picker. Use single-component templates when the page has separate month / year fields.
+- **`card-billing-address`** — `format` names the sub-component(s) for this field:
+  `ADDRESS_LINE1`, `ADDRESS_LINE2`, `CITY`, `ZIP`, `STATE`, `COUNTRY` (comma-separate
+  for a combined line). **No `format` → a multi-line textarea for the whole address.**
+  So `.zip` → `{field:"card-billing-address", format:"ZIP"}`, `.state` →
+  `{...,"format":"STATE"}`, each its own single-line field.
+
+**Dropdowns:** if the target element is a `<select>` (common for expiry month/year,
+state, country), the service **selects the matching `<option>`** (by value or visible
+text) instead of typing — so the same `card-exp`/`card-billing-address` field works
+whether the page uses a text input or a dropdown. The matcher also resolves basic
+**country / US-state aliases** (e.g. `US` ↔ `United States`, `CA` ↔ `California`),
+so the value matches whether the option uses a 2-letter code or the full name.
+
+```json
+{ "fields": [
+  { "selector": "#cc-name",   "label": "Name on card",    "field": "card-holder-name" },
+  { "selector": "#cc-number", "label": "Card number",     "field": "card-number" },
+  { "selector": "#cc-exp",    "label": "Expiry",          "field": "card-exp" },
+  { "selector": "#cc-cvv",    "label": "CVV",             "field": "card-cvv" },
+  { "selector": "#cc-addr",   "label": "Billing address", "field": "card-billing-address" }
+], "message": "Enter your card details to complete checkout" }
+```
 
 ## Notes
 

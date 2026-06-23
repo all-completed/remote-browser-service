@@ -31,7 +31,7 @@ All API endpoints (except `/health`) require authentication. The service support
    - The `user_id` in path must match the authenticated user's user_id from the token
 
 2. **API Key Authentication**:
-   - API key is a JWT signed with `JWT_SECRET`, containing `user_id`. Get it from the UI (Token page at `#/token`) or `PUT /api/users/me/api-key`
+   - The API key is a signed JWT that carries your `user_id`. Get it from the UI (Token page at `#/token`) or `PUT /api/users/me/api-key` — it is shown once at generation, so copy it then.
    - Provide API key using one of:
      - Authorization Header: `Authorization: Bearer <api-key>`
      - X-API-Key Header: `X-API-Key: <api-key>`
@@ -662,13 +662,20 @@ Or several fields in one prompt (max **50**):
 | `ref` | string | Alternative to selector | Ref from accessibility snapshot |
 | `fields` | array | For multi-field | List of `{selector, label?, field?, length?, format?}` (max 50) |
 | `label` | string | No | Short field name shown to the user (e.g. `"Password"`). Capped at 120 chars |
-| `field` | string | No | Prompt hint: `password` (default, masked), `code`, `login`, `email`, `text` |
+| `field` | string | No | Prompt hint: `password` (default, masked), `code`, `login`, `email`, `text`, or payment-card kinds `card-holder-name` / `card-number` / `card-cvv` / `card-exp` / `card-billing-address` (see [formats](keeper-fill-formats.md)) |
 | `length` | integer | No | Max input length (1–4096); caps the Keeper input |
 | `format` | string | No | Input constraint/hint: `email`, `numeric`/`digits`, or a regex. See [formats](keeper-fill-formats.md) |
 | `message` | string | No | Plain-language reason shown to the user. Capped at 600 chars |
 | `url` | string | No | Page URL shown to the user; auto-detected from the page if omitted |
 | `screenshot_selector` | string | No | Selector to capture for the single proof screenshot |
 | `screenshot_selectors` | array | No | Selectors whose union (+ margin) is captured as the single proof screenshot |
+
+**Payment cards:** with the `card-*` field kinds the Keeper renders card-aware
+inputs (masked number/CVV, `MM/YY` expiry, billing components) so card data is
+never exposed to the agent. If a target element is a `<select>` (expiry month/year,
+state, country), the service selects the matching `<option>` instead of typing —
+so the same field works whether the page uses a text input or a dropdown. See
+[keeper-fill-formats.md](keeper-fill-formats.md) for the per-field `format` spec.
 
 The Keeper shows **one** proof screenshot for the whole request. If neither
 `screenshot_selector` nor `screenshot_selectors` is given, the union of the field
@@ -826,7 +833,7 @@ DevTools CDP WebSocket. Connects to the browser's DevTools protocol (e.g. for Pl
 
 **Examples:**
 ```
-wss://rb.all-completed.com/users/vvazhesov/ws/my-session?mode=browser&access_token=<token>
+wss://rb.all-completed.com/users/<user_id>/ws/my-session?mode=browser&access_token=<token>
 wss://rb.all-completed.com/ws/my-session?mode=browser&access_token=<token>
 wss://rb.all-completed.com/ws/my-session?mode=browser&url=https://example.com&access_token=<token>
 wss://rb.all-completed.com/ws/my-fork?mode=browser&from=original-session&access_token=<token>
