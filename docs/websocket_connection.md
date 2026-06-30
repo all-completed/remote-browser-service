@@ -79,6 +79,30 @@ python websocket_connection.py
 python websocket_connection.py --no-playwright --session-id abc123
 ```
 
+## Session lifecycle: disconnect vs. idle timeout
+
+**Closing a connection does not close the session.** A persistent session (the default)
+stays alive until a **5-minute idle timeout** or an **explicit terminate** — not at the
+moment your CDP or VNC socket drops. This applies to both transports:
+
+- **CDP (`/ws`)** — While a client is connected the pod is pinned (`active_ws_connections > 0`),
+  so the idle reaper skips it. On disconnect the pod is kept alive and the 5-minute idle clock
+  restarts — so a reconnecting client (e.g. Playwright's `connectOverCDP`, which connects and
+  disconnects repeatedly) doesn't churn the pod. **Exception:** `ephemeral` sessions are deleted
+  immediately on the last disconnect (they are never saved).
+- **VNC (`/vnc/ws`)** — Same as CDP: while a viewer streams the session is pinned, so it isn't
+  reaped mid-view; on disconnect the pod is kept and the idle clock restarts.
+
+**What restarts the 5-minute idle clock:** opening a CDP/VNC connection,
+`GET /api/sessions/{id}/status`, `GET /api/sessions/{id}`, and `POST /api/sessions/{id}/ping`.
+
+**To close a session immediately** instead of waiting out the idle timeout, terminate it:
+`DELETE /api/sessions/{session_id}`. The idle handler and explicit terminate both save the
+profile before deleting the session.
+
 ## Session persistence
 
-When you disconnect (Ctrl+C or `--duration` expiry), the server saves cookies, `localStorage`, and `sessionStorage` before shutting down. Reconnect with the same `--session-id` to restore the session.
+When the session is torn down (idle timeout, explicit terminate, or `--duration` expiry), the
+server saves the **whole browser profile** (cookies, `localStorage`, `sessionStorage`, IndexedDB,
+Service Workers, Cache Storage — all consistent) before deleting it, and records the resumable
+page URL. Reconnect with the same `--session-id` to restore it (you stay logged in).

@@ -742,11 +742,12 @@ never included.
 
 List stored session IDs (from S3). Stored state includes cookies, localStorage, sessionStorage, and metadata (e.g. last page URL used for redirect on resume).
 
-**Response (200 OK):**
+**Response (200 OK):** `descriptions` maps each session ID to its free-text label (or `null`).
 ```json
 {
   "sessions": ["session-abc", "session-xyz"],
-  "count": 2
+  "count": 2,
+  "descriptions": {"session-abc": "Acme portal — billing", "session-xyz": null}
 }
 ```
 
@@ -772,12 +773,15 @@ Get stored session metadata (e.g. redirect URL).
 
 #### `PUT /api/users/{user_id}/stored-sessions/{session_id}` or `PUT /api/stored-sessions/{session_id}`
 
-Update stored session metadata. Merges with existing. Body: `{url?}`.
+Update stored session metadata. Merges with existing. Body: `{url?, description?}`.
 
 **Request Body (JSON):**
 ```json
-{"url": "https://example.com"}
+{"url": "https://example.com", "description": "Acme portal — billing"}
 ```
+
+- `url` is used when reconnecting without an explicit `url`; send `""`/`null` to clear it.
+- `description` is a free-text human label (max 500 chars), returned in the list endpoint's `descriptions` map; send `""`/`null` to clear it.
 
 **Response (200 OK):**
 ```json
