@@ -50,6 +50,48 @@ Custom pattern (e.g. a license key of 4 groups of 4 alphanumerics):
   "format": "[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4}" }
 ```
 
+## `generate`
+
+Set `generate: true` on a field to have the **Keeper create a strong value itself**
+(e.g. a new password for a sign-up or change-password flow), fill it, and save it —
+instead of asking the user to type one.
+
+**This is UNATTENDED by default.** When every field of a `request_fill` is a
+`generate` field, the Keeper creates each value, fills it, and saves it with **no
+prompt** — the user is never asked, and the request goes straight to `filled`.
+
+- The value is generated **inside the Keeper** with a CSPRNG. It is never produced
+  by, sent to, or returned to the agent (same guarantee as a typed value).
+- **Policy (password):** length **>= 14** (a `length` below 14 is raised to 14; use
+  `length` only to make it *longer*, capped at 128) and **always** at least one
+  lowercase, one uppercase, and one digit. Symbols are included unless you set
+  `symbols: false` — the mandatory set is exactly `a-z` / `A-Z` / `0-9`.
+- **Numeric** (`format: "numeric"`/`"digits"`/`"number"`): digits only at the
+  requested `length` — for PINs. The 14 floor does **not** apply here.
+- The generated value is saved to the user's Keeper (synced across their devices) so
+  it can auto-fill on the next login.
+- **User opt-out:** each Keeper has a per-device setting to review generated values in
+  a prompt (with a regenerate button) before they fill. The agent's request is
+  identical either way, and the agent still only ever learns the `status`.
+
+```json
+{ "selector": "#new-password", "label": "New password", "field": "password", "generate": true }
+```
+```json
+{ "selector": "#pw", "label": "New password", "field": "password",
+  "generate": true, "length": 24, "symbols": false }
+```
+
+To have the **user** choose the password instead, send a normal (non-`generate`)
+request_fill — that always prompts.
+
+## `symbols`
+
+Only meaningful with `generate: true` on a non-numeric field. Set `symbols: false` to
+exclude symbols from the generated password (for sites that reject them) — the value is
+then `a-z` / `A-Z` / `0-9` only, still >= 14 chars with each class guaranteed. Defaults
+to `true`. Ignored for numeric and non-generate fields.
+
 ## `field` (related)
 
 `field` is the prompt *kind*, separate from `format`. It controls masking and the
