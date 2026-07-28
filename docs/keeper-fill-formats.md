@@ -85,6 +85,21 @@ prompt** — the user is never asked, and the request goes straight to `filled`.
 To have the **user** choose the password instead, send a normal (non-`generate`)
 request_fill — that always prompts.
 
+**Confirm-password fields — send BOTH selectors in ONE request.** Sign-up and
+change-password forms almost always have "Password" and "Confirm password". Put
+BOTH in the same `fields` array with `generate: true`: every `generate` field in a
+single request receives the SAME generated value, so the confirmation matches and
+the service fills both. Sending them as two separate `request_fill` calls
+generates two DIFFERENT passwords and the form rejects the submit. The same holds
+for a PIN and its confirmation.
+
+```json
+{"fields": [
+  {"selector": "#password",         "field": "password", "generate": true},
+  {"selector": "#password-confirm", "field": "password", "generate": true}
+]}
+```
+
 ## `symbols`
 
 Only meaningful with `generate: true` on a non-numeric field. Set `symbols: false` to
